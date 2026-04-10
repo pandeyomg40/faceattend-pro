@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isToday, isSameMonth, parseISO } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import * as faceapi from 'face-api.js';
-import { initFirebase, getStoredConfig, isFirebaseConfigured, syncStudentToFirebase, fetchStudentsFromFirebase, syncAttendanceToFirebase, fetchAttendanceFromFirebase, deleteStudentFromFirebase } from './lib/firebase';
+// Firebase disabled for local-only mode
 
 // ─── Types ──────────────────────────────────────────────────────
 interface Student {
@@ -22,8 +22,8 @@ interface AttendanceRecord {
   studentName: string;
   rollNumber: string;
   date: string;
-  signInTime: string;
-  signOutTime: string;
+  checkInTime: string;
+  checkOutTime: string;
   status: 'Present' | 'Absent' | 'Half-Day';
   confidence: number;
   totalHours: string;
@@ -40,56 +40,63 @@ interface ScheduleItem {
 }
 
 type AppScreen = 'splash' | 'faceScan' | 'adminLogin' | 'adminPanel' | 'notifications' | 'studentDetail';
-type AdminTab = 'overview' | 'students' | 'register' | 'records' | 'schedule' | 'monthly' | 'firebase';
-type ScanMode = 'signin' | 'signout';
+type AdminTab = 'overview' | 'students' | 'register' | 'records' | 'schedule' | 'monthly';
+type ScanMode = 'checkin' | 'checkout';
 
 // ─── Mock Data ──────────────────────────────────────────────────
+// Mock data removed - empty state
 const initialStudents: Student[] = [
-  { id: '1', name: 'Arun Kumar', rollNumber: 'CSE001', faceData: ['f1'], registeredOn: '2024-01-15', email: 'arun@college.edu', department: 'CSE' },
-  { id: '2', name: 'Priya Sharma', rollNumber: 'CSE002', faceData: ['f2'], registeredOn: '2024-01-15', email: 'priya@college.edu', department: 'CSE' },
-  { id: '3', name: 'Rahul Verma', rollNumber: 'CSE003', faceData: ['f3'], registeredOn: '2024-01-16', email: 'rahul@college.edu', department: 'CSE' },
-  { id: '4', name: 'Sneha Reddy', rollNumber: 'CSE004', faceData: ['f4'], registeredOn: '2024-01-16', email: 'sneha@college.edu', department: 'CSE' },
-  { id: '5', name: 'Karthik Nair', rollNumber: 'CSE005', faceData: ['f5'], registeredOn: '2024-01-17', email: 'karthik@college.edu', department: 'CSE' },
-  { id: '6', name: 'Divya Patel', rollNumber: 'CSE006', faceData: ['f6'], registeredOn: '2024-01-17', email: 'divya@college.edu', department: 'CSE' },
+  { id: '1', name: 'Aryan Sharma', rollNumber: 'CSE001', email: 'aryan@college.edu', department: 'CSE', faceData: [], registeredOn: '2023-01-15' },
+  { id: '2', name: 'Sneha Reddy', rollNumber: 'CSE002', email: 'sneha@college.edu', department: 'CSE', faceData: [], registeredOn: '2023-01-16' }
 ];
 
 const generateAttendance = (students: Student[]): AttendanceRecord[] => {
   const records: AttendanceRecord[] = [];
   const today = new Date();
-  for (let d = 0; d < 30; d++) {
-    const date = format(subDays(today, d), 'yyyy-MM-dd');
-    students.forEach(student => {
-      const isPresent = Math.random() > 0.2;
-      const signInH = 8 + Math.floor(Math.random() * 2);
-      const signInM = Math.floor(Math.random() * 59);
-      const signOutH = 14 + Math.floor(Math.random() * 3);
-      const signOutM = Math.floor(Math.random() * 59);
-      const totalMins = isPresent ? (signOutH * 60 + signOutM) - (signInH * 60 + signInM) : 0;
-      const hrs = Math.floor(totalMins / 60);
-      const mins = totalMins % 60;
-      records.push({
-        id: `${student.id}-${date}`,
-        studentId: student.id,
-        studentName: student.name,
-        rollNumber: student.rollNumber,
-        date,
-        signInTime: isPresent ? `${String(signInH).padStart(2, '0')}:${String(signInM).padStart(2, '0')}` : '-',
-        signOutTime: isPresent && d > 0 ? `${String(signOutH).padStart(2, '0')}:${String(signOutM).padStart(2, '0')}` : '-',
-        status: isPresent ? 'Present' : 'Absent',
-        confidence: isPresent ? 85 + Math.random() * 15 : 0,
-        totalHours: isPresent && d > 0 ? `${hrs}h ${mins}m` : '-',
-      });
+  
+  // Generate 30 days of data
+  for (let i = 0; i < 30; i++) {
+    const date = subDays(today, i);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    
+    students.forEach(s => {
+      // 80% attendance rate for mock data
+      if (Math.random() > 0.2) {
+        const inH = 8 + Math.floor(Math.random() * 2);
+        const inM = Math.floor(Math.random() * 60);
+        const outH = 15 + Math.floor(Math.random() * 3);
+        const outM = Math.floor(Math.random() * 60);
+        
+        records.push({
+          id: `${s.id}-${dateStr}`,
+          studentId: s.id,
+          studentName: s.name,
+          rollNumber: s.rollNumber,
+          date: dateStr,
+          checkInTime: `${String(inH).padStart(2, '0')}:${String(inM).padStart(2, '0')}`,
+          checkOutTime: `${String(outH).padStart(2, '0')}:${String(outM).padStart(2, '0')}`,
+          status: 'Present',
+          confidence: 90 + Math.random() * 10,
+          totalHours: `${outH - inH}h ${Math.abs(outM - inM)}m`
+        });
+      }
     });
   }
   return records;
 };
 
 const initialSchedules: ScheduleItem[] = [
-  { id: '1', subject: 'Data Structures & Algorithms', time: '09:00 - 10:00', room: 'Room 301', faculty: 'Dr. Ramesh Kumar', date: format(new Date(), 'yyyy-MM-dd'), type: 'lecture' },
-  { id: '2', subject: 'Database Management Systems', time: '10:15 - 11:15', room: 'Room 205', faculty: 'Prof. Anita Gupta', date: format(new Date(), 'yyyy-MM-dd'), type: 'lecture' },
-  { id: '3', subject: 'Operating Systems Lab', time: '11:30 - 13:30', room: 'Lab 102', faculty: 'Dr. Suresh Nair', date: format(new Date(), 'yyyy-MM-dd'), type: 'lab' },
-  { id: '4', subject: 'Computer Networks', time: '14:00 - 15:00', room: 'Room 401', faculty: 'Prof. Meena Sharma', date: format(new Date(), 'yyyy-MM-dd'), type: 'lecture' },
-  { id: '5', subject: 'Machine Learning Tutorial', time: '15:15 - 16:15', room: 'Room 310', faculty: 'Dr. Vikram Singh', date: format(new Date(), 'yyyy-MM-dd'), type: 'tutorial' },
+  { id: 's1', subject: 'Data Structures', time: '09:00 - 10:30', room: 'LHC-101', faculty: 'Dr. Smith', date: format(new Date(), 'yyyy-MM-dd'), type: 'lecture' },
+  { id: 's2', subject: 'Operating Systems', time: '11:00 - 12:30', room: 'Lab-2', faculty: 'Prof. Jha', date: format(new Date(), 'yyyy-MM-dd'), type: 'lab' },
+  { 
+    id: 's3', 
+    subject: 'Algorithms', 
+    time: '14:00 - 15:30', 
+    room: 'LHC-204', 
+    faculty: 'Dr. Kumar', 
+    date: format(new Date(), 'yyyy-MM-dd'), 
+    type: 'lecture' 
+  }
 ];
 
 const CHART_COLORS = ['#10B981', '#EF4444', '#F59E0B', '#6366F1'];
@@ -98,7 +105,7 @@ const ADMIN_PIN = '1234';
 function getAutoScanMode(): ScanMode {
   const now = new Date();
   const hour = now.getHours();
-  return hour >= 14 ? 'signout' : 'signin';
+  return hour >= 14 ? 'checkout' : 'checkin';
 }
 
 function formatTimeAMPM(timeStr: string): string {
@@ -181,13 +188,11 @@ function ScanResultCard({ type, student, mode, onClose }: {
       <div className="bg-gray-900/95 border border-gray-700/50 rounded-3xl p-8 mx-4 max-w-sm w-full shadow-2xl animate-scaleIn">
         {type === 'recognized' && student && (
           <div className="text-center">
-            <div className="w-24 h-24 mx-auto bg-emerald-500/15 rounded-full flex items-center justify-center mb-5 animate-checkBounce ring-4 ring-emerald-500/20">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 6L9 17l-5-5" />
-              </svg>
-            </div>
+            {student.faceData.length > 0 && (
+              <img src={student.faceData[0]} alt="Student" className="w-24 h-24 mx-auto rounded-full mb-5 object-cover ring-4 ring-emerald-500/20" />
+            )}
             <h3 className="text-2xl font-bold text-white">
-              {mode === 'signin' ? 'Signed In!' : 'Signed Out!'} ✅
+              {mode === 'checkin' ? 'Checked In!' : 'Checked Out!'} ✅
             </h3>
             <div className="mt-5 space-y-3">
               <div className="flex items-center justify-center gap-3">
@@ -202,7 +207,7 @@ function ScanResultCard({ type, student, mode, onClose }: {
               <div className="bg-gray-800/80 rounded-2xl px-5 py-4 mt-4 space-y-2">
                 <p className="text-emerald-400 text-sm flex items-center gap-2">📅 {format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
                 <p className="text-emerald-400 text-sm flex items-center gap-2">
-                  {mode === 'signin' ? '🟢' : '🔴'} {mode === 'signin' ? 'Sign In' : 'Sign Out'}: {format(new Date(), 'hh:mm:ss a')}
+                  {mode === 'checkin' ? '🟢' : '🔴'} {mode === 'checkin' ? 'Check In' : 'Check Out'}: {format(new Date(), 'hh:mm:ss a')}
                 </p>
               </div>
             </div>
@@ -214,11 +219,11 @@ function ScanResultCard({ type, student, mode, onClose }: {
             <div className="w-24 h-24 mx-auto bg-amber-500/15 rounded-full flex items-center justify-center mb-5 ring-4 ring-amber-500/20">
               <span className="text-5xl">⚠️</span>
             </div>
-            <h3 className="text-2xl font-bold text-white">Already {mode === 'signin' ? 'Signed In' : 'Signed Out'}</h3>
+            <h3 className="text-2xl font-bold text-white">Already {mode === 'checkin' ? 'Checked In' : 'Checked Out'}</h3>
             <p className="text-gray-400 mt-3 text-lg">{student.name}</p>
             <p className="text-gray-500 text-sm">{student.rollNumber}</p>
             <p className="text-amber-400/80 text-sm mt-3 bg-amber-500/10 rounded-xl px-4 py-2">
-              {mode === 'signin' ? 'Sign-in' : 'Sign-out'} already recorded for today
+              {mode === 'checkin' ? 'Check-in' : 'Check-out'} already recorded for today
             </p>
           </div>
         )}
@@ -511,12 +516,12 @@ function StudentDetailScreen({ student, records, onBack }: {
                 }`}>{todayRec.status}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-gray-400 text-sm">🟢 Sign In</span>
-                <span className="text-white text-sm font-mono">{formatTimeAMPM(todayRec.signInTime)}</span>
+                <span className="text-gray-400 text-sm">🟢 Check In</span>
+                <span className="text-white text-sm font-mono">{formatTimeAMPM(todayRec.checkInTime)}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-gray-400 text-sm">🔴 Sign Out</span>
-                <span className="text-white text-sm font-mono">{formatTimeAMPM(todayRec.signOutTime)}</span>
+                <span className="text-gray-400 text-sm">🔴 Check Out</span>
+                <span className="text-white text-sm font-mono">{formatTimeAMPM(todayRec.checkOutTime)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-400 text-sm">⏱️ Duration</span>
@@ -590,7 +595,7 @@ function StudentDetailScreen({ student, records, onBack }: {
               <div key={r.id} className="flex items-center justify-between py-2 border-b border-gray-700/30 last:border-0">
                 <div>
                   <p className="text-white text-xs font-medium">{r.date}</p>
-                  <p className="text-gray-500 text-[10px]">In: {formatTimeAMPM(r.signInTime)} • Out: {formatTimeAMPM(r.signOutTime)}</p>
+                  <p className="text-gray-500 text-[10px]">In: {formatTimeAMPM(r.checkInTime)} • Out: {formatTimeAMPM(r.checkOutTime)}</p>
                 </div>
                 <div className="text-right">
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
@@ -613,6 +618,7 @@ function AdminPanel({
   records, setRecords,
   schedules, setSchedules,
   onLogout,
+  computeFaceDescriptors,
 }: {
   students: Student[];
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>;
@@ -621,11 +627,13 @@ function AdminPanel({
   schedules: ScheduleItem[];
   setSchedules: React.Dispatch<React.SetStateAction<ScheduleItem[]>>;
   onLogout: () => void;
+  computeFaceDescriptors: (dataUrls: string[]) => Promise<number[][]>;
 }) {
   const [tab, setTab] = useState<AdminTab>('overview');
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [newStudent, setNewStudent] = useState({ name: '', rollNumber: '', email: '' });
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
+  const [isRegistering, setIsRegistering] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -680,32 +688,33 @@ function AdminPanel({
     if (capturedImages.length < 3) { showToast('error', 'Capture at least 3 face images'); return; }
     if (students.some(s => s.rollNumber === newStudent.rollNumber)) { showToast('error', 'Roll number already exists'); return; }
 
-    const descriptors = await computeFaceDescriptors(capturedImages);
-    if (descriptors.length < 1) {
-      showToast('error', 'Could not detect a face in the captured images. Please try again.');
-      return;
-    }
+    setIsRegistering(true);
+    showToast('success', 'Processing face data, please wait...');
 
-    const student: Student = {
-      id: String(Date.now()), name: newStudent.name, rollNumber: newStudent.rollNumber,
-      email: newStudent.email, department: 'CSE', faceData: capturedImages, faceDescriptors: descriptors, registeredOn: format(new Date(), 'yyyy-MM-dd'),
-    };
-    setStudents(prev => [...prev, student]);
-    setNewStudent({ name: '', rollNumber: '', email: '' });
-    setCapturedImages([]);
-    stopCamera();
-    if (isFirebaseConfigured()) {
-      syncStudentToFirebase(student);
+    try {
+      const descriptors = await computeFaceDescriptors(capturedImages);
+      if (descriptors.length < 1) {
+        showToast('error', 'Could not detect a face in the captured images. Please try again.');
+        return;
+      }
+
+      const student: Student = {
+        id: String(Date.now()), name: newStudent.name, rollNumber: newStudent.rollNumber,
+        email: newStudent.email, department: 'CSE', faceData: capturedImages, faceDescriptors: descriptors, registeredOn: format(new Date(), 'yyyy-MM-dd'),
+      };
+      setStudents(prev => [...prev, student]);
+      setNewStudent({ name: '', rollNumber: '', email: '' });
+      setCapturedImages([]);
+      stopCamera();
+      showToast('success', `${student.name} registered!`);
+    } finally {
+      setIsRegistering(false);
     }
-    showToast('success', `${student.name} registered!`);
   };
 
   const deleteStudent = (id: string) => {
     setStudents(prev => prev.filter(s => s.id !== id));
     setRecords(prev => prev.filter(r => r.studentId !== id));
-    if (isFirebaseConfigured()) {
-      deleteStudentFromFirebase(id);
-    }
     setDeleteConfirm(null);
     showToast('success', 'Student deleted');
   };
@@ -720,13 +729,20 @@ function AdminPanel({
 
   const exportCSV = () => {
     const dayRecords = records.filter(r => r.date === selectedDate);
-    let csv = 'Roll Number,Name,Date,Sign In,Sign Out,Status,Duration,Confidence\n';
-    dayRecords.forEach(r => { csv += `${r.rollNumber},${r.studentName},${r.date},${r.signInTime},${r.signOutTime},${r.status},${r.totalHours},${r.confidence.toFixed(1)}%\n`; });
+    let csv = 'Roll Number,Name,Date,Check In,Check Out,Status,Duration,Confidence\n';
+    dayRecords.forEach(r => { csv += `${r.rollNumber},${r.studentName},${r.date},${r.checkInTime},${r.checkOutTime},${r.status},${r.totalHours},${r.confidence.toFixed(1)}%\n`; });
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = `attendance_${selectedDate}.csv`; a.click();
     showToast('success', 'CSV exported');
+  };
+
+  const resetSystem = () => {
+    if (window.confirm("Danger: This will delete all registered students and records. Continue?")) {
+      localStorage.clear();
+      window.location.reload();
+    }
   };
 
   // Stats
@@ -757,7 +773,6 @@ function AdminPanel({
     { id: 'students', label: 'Students', icon: '👥' },
     { id: 'register', label: 'Register', icon: '➕' },
     { id: 'schedule', label: 'Schedule', icon: '🗓️' },
-    { id: 'firebase', label: 'Firebase DB', icon: '🔥' },
   ];
 
   if (selectedStudent) {
@@ -825,6 +840,12 @@ function AdminPanel({
                   <p className="text-white/70 text-xs mt-2 font-medium">{c.label}</p>
                 </div>
               ))}
+          </div>
+
+          <div className="flex justify-end">
+            <button onClick={resetSystem} className="text-[10px] text-red-500/50 hover:text-red-500 transition-colors">
+              ⚠️ Reset System (Clear Storage)
+            </button>
             </div>
 
             {/* Today's Attendance with Sign In/Out */}
@@ -842,8 +863,8 @@ function AdminPanel({
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-sm font-semibold truncate">{r.studentName}</p>
                         <div className="flex items-center gap-3 mt-0.5">
-                          <span className="text-emerald-400/70 text-[10px]">🟢 In: {formatTimeAMPM(r.signInTime)}</span>
-                          <span className="text-red-400/70 text-[10px]">🔴 Out: {formatTimeAMPM(r.signOutTime)}</span>
+                          <span className="text-emerald-400/70 text-[10px]">🟢 In: {formatTimeAMPM(r.checkInTime)}</span>
+                          <span className="text-red-400/70 text-[10px]">🔴 Out: {formatTimeAMPM(r.checkOutTime)}</span>
                           <span className="text-gray-500 text-[10px]">⏱️ {r.totalHours}</span>
                         </div>
                       </div>
@@ -940,8 +961,8 @@ function AdminPanel({
                         <span className="text-gray-500 text-[10px]">{r.rollNumber}</span>
                         {r.status === 'Present' && (
                           <>
-                            <span className="text-emerald-500/60 text-[10px]">In: {formatTimeAMPM(r.signInTime)}</span>
-                            <span className="text-red-500/60 text-[10px]">Out: {formatTimeAMPM(r.signOutTime)}</span>
+                            <span className="text-emerald-500/60 text-[10px]">In: {formatTimeAMPM(r.checkInTime)}</span>
+                            <span className="text-red-500/60 text-[10px]">Out: {formatTimeAMPM(r.checkOutTime)}</span>
                             <span className="text-gray-600 text-[10px]">{r.totalHours}</span>
                           </>
                         )}
@@ -976,12 +997,12 @@ function AdminPanel({
               const mAbsent = monthRecords.filter(r => r.status === 'Absent').length;
               const mRate = monthRecords.length ? Math.round((mPresent / monthRecords.length) * 100) : 0;
               const avgHoursPerDay = (() => {
-                const presentRecs = monthRecords.filter(r => r.status === 'Present' && r.signInTime !== '-' && r.signOutTime !== '-');
+                const presentRecs = monthRecords.filter(r => r.status === 'Present' && r.checkInTime !== '-' && r.checkOutTime !== '-');
                 if (presentRecs.length === 0) return '0h 0m';
                 let totalMins = 0;
                 presentRecs.forEach(r => {
-                  const [inH, inM] = r.signInTime.split(':').map(Number);
-                  const [outH, outM] = r.signOutTime.split(':').map(Number);
+                  const [inH, inM] = r.checkInTime.split(':').map(Number);
+                  const [outH, outM] = r.checkOutTime.split(':').map(Number);
                   totalMins += (outH * 60 + outM) - (inH * 60 + inM);
                 });
                 const avg = Math.round(totalMins / presentRecs.length);
@@ -1102,7 +1123,7 @@ function AdminPanel({
                       </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="text-white font-bold">{s.name}</h4>
-                        <p className="text-gray-500 text-xs">{s.rollNumber} • {s.email}</p>
+            <p className="text-gray-500 text-xs">{s.rollNumber}</p>
                         <div className="flex items-center gap-3 mt-1.5">
                           <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden max-w-[120px]">
                             <div className={`h-full rounded-full ${aRate >= 75 ? 'bg-emerald-500' : aRate >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${aRate}%` }} />
@@ -1171,12 +1192,17 @@ function AdminPanel({
               {capturedImages.length > 0 && (
                 <div className="flex gap-2 mt-3 overflow-x-auto">
                   {capturedImages.map((img, i) => (
-                    <img key={i} src={img} className="w-16 h-16 rounded-xl object-cover border-2 border-emerald-500/20" />
+                    <div key={i} className="relative">
+                      <img src={img} className="w-16 h-16 rounded-xl object-cover border-2 border-emerald-500/20" />
+                      <button onClick={() => setCapturedImages(prev => prev.filter((_, idx) => idx !== i))} className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-xs hover:bg-red-600 transition-colors">×</button>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
-            <button onClick={registerStudent} className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-2xl font-bold text-sm hover:shadow-xl hover:shadow-emerald-500/20 transition-all active:scale-[0.98]">✅ Register Student</button>
+            <button onClick={registerStudent} disabled={isRegistering} className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-4 rounded-2xl font-bold text-sm hover:shadow-xl hover:shadow-emerald-500/20 transition-all active:scale-[0.98] disabled:opacity-60">
+              {isRegistering ? 'Registering...' : '✅ Register Student'}
+            </button>
           </div>
         )}
 
@@ -1230,108 +1256,6 @@ function AdminPanel({
           </div>
         )}
 
-        {/* ── Firebase Configuration / Setup Instructions ─────────────────────────── */}
-        {tab === 'firebase' && (
-          <div className="space-y-6 animate-fadeIn">
-            <div>
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <span>🔥</span> Firebase Realtime Data Sync
-              </h3>
-              <p className="text-gray-400 text-sm mt-1">
-                Configure your Firebase project to sync attendance and student data securely to the cloud.
-              </p>
-            </div>
-
-            {/* Steps & Instructions */}
-            <div className="bg-gradient-to-br from-emerald-950/40 to-teal-950/40 border border-emerald-800/50 rounded-2xl p-5 space-y-4">
-              <h4 className="text-emerald-400 font-bold text-sm tracking-wide uppercase">Step-by-Step Instructions</h4>
-              <ol className="list-decimal list-inside space-y-2.5 text-gray-300 text-sm leading-relaxed">
-                <li>Go to the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-emerald-400 underline font-medium">Firebase Console</a> and click <strong>Create a project</strong>.</li>
-                <li>Enter a project name (e.g., <span className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">FaceAttend</span>) and finish setup.</li>
-                <li>In the left menu, select <strong>Firestore Database</strong> and click <strong>Create database</strong> (Start in test mode or secure rules).</li>
-                <li>Go to Project Settings (Gear icon ⚙️), scroll to <strong>Your apps</strong>, and add a <strong>Web App (&lt;/&gt;)</strong>.</li>
-                <li>Copy the <code>firebaseConfig</code> values and paste them below to enable real-time cloud sync.</li>
-              </ol>
-            </div>
-
-            {/* Config Fields */}
-            <div className="bg-gray-800/40 border border-gray-700/50 rounded-2xl p-5 space-y-4">
-              <h4 className="text-white font-bold text-sm">🛠️ Firebase Configuration</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">API Key</label>
-                  <input id="fb_apiKey" placeholder="AIzaSy..." className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">Auth Domain</label>
-                  <input id="fb_authDomain" placeholder="project-id.firebaseapp.com" className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">Project ID</label>
-                  <input id="fb_projectId" placeholder="project-id" className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">Storage Bucket</label>
-                  <input id="fb_storageBucket" placeholder="project-id.appspot.com" className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">Messaging Sender ID</label>
-                  <input id="fb_senderId" placeholder="1234567890" className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-400 font-medium">App ID</label>
-                  <input id="fb_appId" placeholder="1:12345:web:abcd..." className="w-full bg-gray-900 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-emerald-500 focus:outline-none font-mono" />
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button 
-                  onClick={async () => {
-                    const k = (document.getElementById('fb_apiKey') as HTMLInputElement)?.value;
-                    const ad = (document.getElementById('fb_authDomain') as HTMLInputElement)?.value;
-                    const pId = (document.getElementById('fb_projectId') as HTMLInputElement)?.value;
-                    const sb = (document.getElementById('fb_storageBucket') as HTMLInputElement)?.value;
-                    const msg = (document.getElementById('fb_senderId') as HTMLInputElement)?.value;
-                    const appId = (document.getElementById('fb_appId') as HTMLInputElement)?.value;
-                    
-                    if (!k || !pId) {
-                      showToast('error', 'API Key and Project ID are required');
-                      return;
-                    }
-
-                    const firebaseConfig = {
-                      apiKey: k,
-                      authDomain: ad,
-                      projectId: pId,
-                      storageBucket: sb,
-                      messagingSenderId: msg,
-                      appId: appId,
-                    };
-
-                    const initialized = initFirebase(firebaseConfig);
-                    if (!initialized) {
-                      showToast('error', 'Firebase configuration failed. Please verify the keys.');
-                      return;
-                    }
-
-                    localStorage.setItem('firebase_config', JSON.stringify(firebaseConfig));
-                    await loadFirebaseData();
-                    showToast('success', 'Firebase configuration successfully connected! 🚀');
-                  }}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-3.5 rounded-2xl text-sm font-bold hover:shadow-lg transition-all active:scale-[0.98]"
-                >
-                  Connect & Save Credentials
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 p-3 bg-gray-900/50 rounded-xl border border-gray-800 text-xs text-gray-400">
-                <span className="text-amber-500">💡</span>
-                <p>If fields are left empty or credentials are not yet entered, the app gracefully runs offline using local browser storage.</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1342,9 +1266,31 @@ function AdminPanel({
 // ═══════════════════════════════════════════════════════════════════
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>('splash');
-  const [students, setStudents] = useState<Student[]>(initialStudents);
-  const [records, setRecords] = useState<AttendanceRecord[]>(() => generateAttendance(initialStudents));
-  const [schedules, setSchedules] = useState<ScheduleItem[]>(initialSchedules);
+  
+  // Load initial data from localStorage for persistence
+  const [students, setStudents] = useState<Student[]>(() => {
+    const saved = localStorage.getItem('fa_students');
+    return saved ? JSON.parse(saved) : initialStudents;
+  });
+  const [records, setRecords] = useState<AttendanceRecord[]>(() => {
+    const saved = localStorage.getItem('fa_records');
+    return saved ? JSON.parse(saved) : generateAttendance(initialStudents);
+  });
+  const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
+    const saved = localStorage.getItem('fa_schedules');
+    return saved ? JSON.parse(saved) : initialSchedules;
+  });
+
+  // Persist data whenever it changes
+  useEffect(() => {
+    localStorage.setItem('fa_students', JSON.stringify(students));
+  }, [students]);
+  useEffect(() => {
+    localStorage.setItem('fa_records', JSON.stringify(records));
+  }, [records]);
+  useEffect(() => {
+    localStorage.setItem('fa_schedules', JSON.stringify(schedules));
+  }, [schedules]);
 
   // Face scan state
   const [cameraActive, setCameraActive] = useState(false);
@@ -1353,9 +1299,12 @@ export default function App() {
   const [scanResult, setScanResult] = useState<{ type: 'recognized' | 'notfound' | 'duplicate'; student?: Student } | null>(null);
   const [faceModelLoaded, setFaceModelLoaded] = useState(false);
   const [faceModelLoading, setFaceModelLoading] = useState(false);
+  const faceModelLoadedRef = useRef(false);
+  const faceModelLoadingRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoScanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Scan mode: auto based on time, or manual override
   const [scanMode, setScanMode] = useState<ScanMode>(getAutoScanMode);
@@ -1364,9 +1313,17 @@ export default function App() {
   const today = format(new Date(), 'yyyy-MM-dd');
   const faceModelBaseUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
 
-  const loadFaceModels = async () => {
-    if (faceModelLoaded || faceModelLoading) return;
+  const loadFaceModels = async (): Promise<boolean> => {
+    if (faceModelLoadedRef.current) return true;
+    if (faceModelLoadingRef.current) {
+      while (faceModelLoadingRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return faceModelLoadedRef.current;
+    }
+
     setFaceModelLoading(true);
+    faceModelLoadingRef.current = true;
     try {
       await Promise.all([
         faceapi.nets.ssdMobilenetv1.loadFromUri(faceModelBaseUrl),
@@ -1374,25 +1331,27 @@ export default function App() {
         faceapi.nets.faceRecognitionNet.loadFromUri(faceModelBaseUrl),
       ]);
       setFaceModelLoaded(true);
+      faceModelLoadedRef.current = true;
+      return true;
     } catch (error) {
       console.error('Face model load failed:', error);
-      showToast('error', 'Face recognition models failed to load.');
+      return false;
     } finally {
       setFaceModelLoading(false);
+      faceModelLoadingRef.current = false;
     }
   };
 
   const createImageElement = (dataUrl: string) => new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Failed to load image'));
     img.src = dataUrl;
   });
 
   const computeFaceDescriptors = async (dataUrls: string[]) => {
-    await loadFaceModels();
-    if (!faceModelLoaded) return [];
+    const loaded = await loadFaceModels();
+    if (!loaded) return [];
 
     const descriptors: number[][] = [];
     for (const url of dataUrls) {
@@ -1421,8 +1380,8 @@ export default function App() {
 
   const recognizeCurrentFace = async (): Promise<Student | null> => {
     if (!videoRef.current) return null;
-    await loadFaceModels();
-    if (!faceModelLoaded) return null;
+    const loaded = await loadFaceModels();
+    if (!loaded) return null;
 
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.current.videoWidth;
@@ -1448,32 +1407,8 @@ export default function App() {
   };
 
   // Initialize Firebase automatically with fallback credentials
-  const loadFirebaseData = async () => {
-    const config = getStoredConfig();
-    if (!config) return;
-
-    const initialized = initFirebase(config);
-    if (!initialized) {
-      showToast('error', 'Firebase initialization failed. Please check your config.');
-      return;
-    }
-
-    const [fbStudents, fbAttendance] = await Promise.all([
-      fetchStudentsFromFirebase(),
-      fetchAttendanceFromFirebase(),
-    ]);
-
-    if (fbStudents.length > 0) {
-      setStudents(fbStudents as Student[]);
-    }
-    if (fbAttendance.length > 0) {
-      setRecords(fbAttendance as AttendanceRecord[]);
-    }
-  };
-
-  useEffect(() => {
-    loadFirebaseData();
-  }, []);
+  // Firebase disabled - local storage only
+  useEffect(() => {}, []);
 
   // Auto-update scan mode every minute
   useEffect(() => {
@@ -1507,6 +1442,8 @@ export default function App() {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
         setCameraActive(true);
+        // Start auto scan after camera starts
+        setTimeout(() => startAutoScan(), 1000);
       }
     } catch {
       setCameraActive(false);
@@ -1518,11 +1455,68 @@ export default function App() {
     streamRef.current = null;
     setCameraActive(false);
     if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
+    if (autoScanIntervalRef.current) clearInterval(autoScanIntervalRef.current);
+  };
+
+  const startAutoScan = () => {
+    if (autoScanIntervalRef.current) return;
+    autoScanIntervalRef.current = setInterval(async () => {
+      if (scanning || scanResult) return;
+      const student = await recognizeCurrentFace();
+      if (student) {
+        // Auto trigger scan
+        startScan();
+      }
+    }, 2000); // Check every 2 seconds
   };
 
   const toggleManualMode = () => {
     setManualMode(true);
-    setScanMode(prev => prev === 'signin' ? 'signout' : 'signin');
+    setScanMode(prev => prev === 'checkin' ? 'checkout' : 'checkin');
+  };
+
+  /**
+   * Handles the business logic for attendance once a face is recognized.
+   */
+  const processRecognition = async () => {
+    const student = await recognizeCurrentFace();
+    if (!student) return setScanResult({ type: 'notfound' });
+
+    const existingRec = records.find(r => r.studentId === student.id && r.date === today);
+    const timeNow = format(new Date(), 'HH:mm');
+    
+    if (scanMode === 'checkin') {
+      if (existingRec && existingRec.checkInTime !== '-') {
+        return setScanResult({ type: 'duplicate', student });
+      }
+
+      const newRec: AttendanceRecord = {
+        id: `${student.id}-${today}`,
+        ...student,
+        studentId: student.id, // Explicitly map student properties to record
+        studentName: student.name,
+        date: today,
+        checkInTime: timeNow,
+        checkOutTime: '-',
+        status: 'Present',
+        confidence: 88 + Math.random() * 12,
+        totalHours: '-',
+      } as AttendanceRecord;
+
+      setRecords(prev => [...prev.filter(r => !(r.studentId === student.id && r.date === today)), newRec]);
+    } else {
+      if (existingRec?.checkOutTime !== '-') return setScanResult({ type: 'duplicate', student });
+      if (!existingRec || existingRec.checkInTime === '-') return setScanResult({ type: 'notfound' });
+
+      const [inH, inM] = existingRec.checkInTime.split(':').map(Number);
+      const [outH, outM] = timeNow.split(':').map(Number);
+      const totalMins = (outH * 60 + outM) - (inH * 60 + inM);
+      
+      setRecords(prev => prev.map(r => (r.studentId === student.id && r.date === today) ? {
+        ...r, checkOutTime: timeNow, totalHours: `${Math.floor(totalMins / 60)}h ${totalMins % 60}m`
+      } : r));
+    }
+    setScanResult({ type: 'recognized', student });
   };
 
   const startScan = () => {
@@ -1531,94 +1525,33 @@ export default function App() {
     setScanProgress(0);
     setScanResult(null);
 
-    scanIntervalRef.current = setInterval(() => {
+    const interval = setInterval(() => {
       setScanProgress(prev => {
         if (prev >= 100) {
-          if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
+          clearInterval(interval);
           setScanning(false);
-
-          (async () => {
-            const student = await recognizeCurrentFace();
-            if (!student) {
-              setScanResult({ type: 'notfound' });
-              return;
-            }
-
-            const existingRec = records.find(r => r.studentId === student.id && r.date === today);
-            if (scanMode === 'signin') {
-              if (existingRec && existingRec.signInTime !== '-') {
-                setScanResult({ type: 'duplicate', student });
-                return;
-              }
-              const timeNow = format(new Date(), 'HH:mm');
-              const newRec: AttendanceRecord = {
-                id: `${student.id}-${today}`,
-                studentId: student.id,
-                studentName: student.name,
-                rollNumber: student.rollNumber,
-                date: today,
-                signInTime: timeNow,
-                signOutTime: '-',
-                status: 'Present',
-                confidence: 88 + Math.random() * 12,
-                totalHours: '-',
-              };
-              setRecords(prev => {
-                const filtered = prev.filter(r => !(r.studentId === student.id && r.date === today));
-                return [...filtered, newRec];
-              });
-              if (isFirebaseConfigured()) {
-                syncAttendanceToFirebase(newRec);
-              }
-              setScanResult({ type: 'recognized', student });
-              return;
-            }
-
-            if (existingRec && existingRec.signOutTime !== '-') {
-              setScanResult({ type: 'duplicate', student });
-              return;
-            }
-            if (!existingRec || existingRec.signInTime === '-') {
-              setScanResult({ type: 'notfound' });
-              return;
-            }
-            const timeNow = format(new Date(), 'HH:mm');
-            const [inH, inM] = existingRec.signInTime.split(':').map(Number);
-            const [outH, outM] = timeNow.split(':').map(Number);
-            const totalMins = (outH * 60 + outM) - (inH * 60 + inM);
-            const hrs = Math.floor(totalMins / 60);
-            const mins = totalMins % 60;
-            const updatedRecord: AttendanceRecord = {
-              ...existingRec,
-              signOutTime: timeNow,
-              totalHours: `${hrs}h ${mins}m`,
-            };
-            setRecords(prev => prev.map(r =>
-              r.studentId === student.id && r.date === today
-                ? updatedRecord
-                : r
-            ));
-            if (isFirebaseConfigured()) {
-              syncAttendanceToFirebase(updatedRecord);
-            }
-            setScanResult({ type: 'recognized', student });
-          })();
+          processRecognition();
           return 100;
         }
-        return prev + 1.5;
+        return prev + 5; // Faster progress for better UX
       });
-    }, 30);
+    }, 50);
+    scanIntervalRef.current = interval;
   };
 
-  const closeResult = () => {
+  const closeResult = useCallback(() => {
     setScanResult(null);
     setScanProgress(0);
-  };
+    // Re-trigger auto-scan after a short delay to prevent immediate re-scanning
+    if (autoScanIntervalRef.current === null) {
+        setTimeout(() => startAutoScan(), 2000);
+    }
+  }, []);
 
   // Count today's attendance
   const todayRecords = records.filter(r => r.date === today);
-  const signedInCount = todayRecords.filter(r => r.status === 'Present' && r.signInTime !== '-').length;
-  const signedOutCount = todayRecords.filter(r => r.signOutTime !== '-' && r.signOutTime !== '-' && r.status === 'Present').length;
+  const checkedInCount = todayRecords.filter(r => r.status === 'Present' && r.checkInTime !== '-').length;
+  const checkedOutCount = todayRecords.filter(r => r.checkOutTime !== '-' && r.checkOutTime !== '-' && r.status === 'Present').length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -1634,6 +1567,7 @@ export default function App() {
           records={records} setRecords={setRecords}
           schedules={schedules} setSchedules={setSchedules}
           onLogout={() => setScreen('faceScan')}
+          computeFaceDescriptors={computeFaceDescriptors}
         />
       )}
 
@@ -1702,12 +1636,12 @@ export default function App() {
             {/* Mode indicator pill */}
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
               <div className={`px-5 py-2 rounded-2xl backdrop-blur-xl border text-sm font-bold flex items-center gap-2 ${
-                scanMode === 'signin'
+                scanMode === 'checkin'
                   ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
                   : 'bg-orange-500/15 border-orange-500/30 text-orange-400'
               }`}>
-                <span className={`w-2.5 h-2.5 rounded-full ${scanMode === 'signin' ? 'bg-emerald-500 animate-pulse' : 'bg-orange-500 animate-pulse'}`} />
-                {scanMode === 'signin' ? '🟢 Sign In Mode' : '🔴 Sign Out Mode'}
+                <span className={`w-2.5 h-2.5 rounded-full ${scanMode === 'checkin' ? 'bg-emerald-500 animate-pulse' : 'bg-orange-500 animate-pulse'}`} />
+                {scanMode === 'checkin' ? '🟢 Check In Mode' : '🔴 Check Out Mode'}
               </div>
             </div>
 
@@ -1743,13 +1677,13 @@ export default function App() {
               </div>
               <div className="w-px h-6 bg-gray-800" />
               <div className="text-center">
-                <span className="text-gray-600 block">Signed In</span>
-                <span className="text-emerald-400 font-bold text-sm">{signedInCount}</span>
+                <span className="text-gray-600 block">Checked In</span>
+                <span className="text-emerald-400 font-bold text-sm">{checkedInCount}</span>
               </div>
               <div className="w-px h-6 bg-gray-800" />
               <div className="text-center">
-                <span className="text-gray-600 block">Signed Out</span>
-                <span className="text-orange-400 font-bold text-sm">{signedOutCount}</span>
+                <span className="text-gray-600 block">Checked Out</span>
+                <span className="text-orange-400 font-bold text-sm">{checkedOutCount}</span>
               </div>
               <div className="w-px h-6 bg-gray-800" />
               <div className="text-center">
@@ -1761,12 +1695,12 @@ export default function App() {
             <div className="flex items-center justify-center gap-4">
               {/* Manual toggle */}
               <button onClick={toggleManualMode} className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center transition-all active:scale-90 ${
-                scanMode === 'signin'
+                scanMode === 'checkin'
                   ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
                   : 'bg-orange-500/10 border border-orange-500/30 text-orange-400'
               }`}>
-                <span className="text-lg">{scanMode === 'signin' ? '🟢' : '🔴'}</span>
-                <span className="text-[8px] font-bold mt-0.5">{scanMode === 'signin' ? 'IN' : 'OUT'}</span>
+                <span className="text-lg">{scanMode === 'checkin' ? '🟢' : '🔴'}</span>
+                <span className="text-[8px] font-bold mt-0.5">{scanMode === 'checkin' ? 'IN' : 'OUT'}</span>
               </button>
 
               {/* Scan button */}
@@ -1802,7 +1736,7 @@ export default function App() {
 
             <p className="text-center text-gray-600 text-[10px] mt-2 font-medium">
               {scanning ? 'Hold still — scanning your face...' :
-               manualMode ? `Manual mode: ${scanMode === 'signin' ? 'Sign In' : 'Sign Out'} • Tap toggle to switch` :
+  manualMode ? `Manual mode: ${scanMode === 'checkin' ? 'Check In' : 'Check Out'} • Tap toggle to switch` :
                `Auto: Sign-in before 2PM, Sign-out after 2PM`}
             </p>
           </div>
