@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isToday, isSameMonth, parseISO } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { initFirebase, getStoredConfig } from './lib/firebase';
+import * as faceapi from 'face-api.js';
+import { initFirebase, getStoredConfig, isFirebaseConfigured, syncStudentToFirebase, fetchStudentsFromFirebase, syncAttendanceToFirebase, fetchAttendanceFromFirebase, deleteStudentFromFirebase } from './lib/firebase';
 
 // ─── Types ──────────────────────────────────────────────────────
 interface Student {
@@ -9,6 +10,7 @@ interface Student {
   name: string;
   rollNumber: string;
   faceData: string[];
+  faceDescriptors?: number[][];
   registeredOn: string;
   email: string;
   department: string;
@@ -673,24 +675,37 @@ function AdminPanel({
     }
   };
 
-  const registerStudent = () => {
+  const registerStudent = async () => {
     if (!newStudent.name || !newStudent.rollNumber || !newStudent.email) { showToast('error', 'Please fill all fields'); return; }
     if (capturedImages.length < 3) { showToast('error', 'Capture at least 3 face images'); return; }
     if (students.some(s => s.rollNumber === newStudent.rollNumber)) { showToast('error', 'Roll number already exists'); return; }
+
+    const descriptors = await computeFaceDescriptors(capturedImages);
+    if (descriptors.length < 1) {
+      showToast('error', 'Could not detect a face in the captured images. Please try again.');
+      return;
+    }
+
     const student: Student = {
       id: String(Date.now()), name: newStudent.name, rollNumber: newStudent.rollNumber,
-      email: newStudent.email, department: 'CSE', faceData: capturedImages, registeredOn: format(new Date(), 'yyyy-MM-dd'),
+      email: newStudent.email, department: 'CSE', faceData: capturedImages, faceDescriptors: descriptors, registeredOn: format(new Date(), 'yyyy-MM-dd'),
     };
     setStudents(prev => [...prev, student]);
     setNewStudent({ name: '', rollNumber: '', email: '' });
     setCapturedImages([]);
     stopCamera();
+    if (isFirebaseConfigured()) {
+      syncStudentToFirebase(student);
+    }
     showToast('success', `${student.name} registered!`);
   };
 
   const deleteStudent = (id: string) => {
     setStudents(prev => prev.filter(s => s.id !== id));
     setRecords(prev => prev.filter(r => r.studentId !== id));
+    if (isFirebaseConfigured()) {
+      deleteStudentFromFirebase(id);
+    }
     setDeleteConfirm(null);
     showToast('success', 'Student deleted');
   };
@@ -1272,7 +1287,7 @@ function AdminPanel({
 
               <div className="pt-2">
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                     const k = (document.getElementById('fb_apiKey') as HTMLInputElement)?.value;
                     const ad = (document.getElementById('fb_authDomain') as HTMLInputElement)?.value;
                     const pId = (document.getElementById('fb_projectId') as HTMLInputElement)?.value;
@@ -1285,10 +1300,23 @@ function AdminPanel({
                       return;
                     }
 
-                    localStorage.setItem('firebase_config', JSON.stringify({
-                      apiKey: k, authDomain: ad, projectId: pId, storageBucket: sb, messagingSenderId: msg, appId: appId
-                    }));
+                    const firebaseConfig = {
+                      apiKey: k,
+                      authDomain: ad,
+                      projectId: pId,
+                      storageBucket: sb,
+                      messagingSenderId: msg,
+                      appId: appId,
+                    };
 
+                    const initialized = initFirebase(firebaseConfig);
+                    if (!initialized) {
+                      showToast('error', 'Firebase configuration failed. Please verify the keys.');
+                      return;
+                    }
+
+                    localStorage.setItem('firebase_config', JSON.stringify(firebaseConfig));
+                    await loadFirebaseData();
                     showToast('success', 'Firebase configuration successfully connected! 🚀');
                   }}
                   className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white py-3.5 rounded-2xl text-sm font-bold hover:shadow-lg transition-all active:scale-[0.98]"
@@ -1323,6 +1351,8 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanResult, setScanResult] = useState<{ type: 'recognized' | 'notfound' | 'duplicate'; student?: Student } | null>(null);
+  const [faceModelLoaded, setFaceModelLoaded] = useState(false);
+  const [faceModelLoading, setFaceModelLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1332,13 +1362,117 @@ export default function App() {
   const [manualMode, setManualMode] = useState(false);
 
   const today = format(new Date(), 'yyyy-MM-dd');
+  const faceModelBaseUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
+
+  const loadFaceModels = async () => {
+    if (faceModelLoaded || faceModelLoading) return;
+    setFaceModelLoading(true);
+    try {
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(faceModelBaseUrl),
+        faceapi.nets.faceLandmark68Net.loadFromUri(faceModelBaseUrl),
+        faceapi.nets.faceRecognitionNet.loadFromUri(faceModelBaseUrl),
+      ]);
+      setFaceModelLoaded(true);
+    } catch (error) {
+      console.error('Face model load failed:', error);
+      showToast('error', 'Face recognition models failed to load.');
+    } finally {
+      setFaceModelLoading(false);
+    }
+  };
+
+  const createImageElement = (dataUrl: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = dataUrl;
+  });
+
+  const computeFaceDescriptors = async (dataUrls: string[]) => {
+    await loadFaceModels();
+    if (!faceModelLoaded) return [];
+
+    const descriptors: number[][] = [];
+    for (const url of dataUrls) {
+      try {
+        const img = await createImageElement(url);
+        const detection = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+        if (detection?.descriptor) {
+          descriptors.push(Array.from(detection.descriptor));
+        }
+      } catch (error) {
+        console.error('Descriptor computation error:', error);
+      }
+    }
+    return descriptors;
+  };
+
+  const buildMatcher = () => {
+    const labeledDescriptors = students
+      .filter(s => s.faceDescriptors && s.faceDescriptors.length > 0)
+      .map(s => new faceapi.LabeledFaceDescriptors(
+        s.id,
+        s.faceDescriptors!.map(d => new Float32Array(d))
+      ));
+    return new faceapi.FaceMatcher(labeledDescriptors, 0.52);
+  };
+
+  const recognizeCurrentFace = async (): Promise<Student | null> => {
+    if (!videoRef.current) return null;
+    await loadFaceModels();
+    if (!faceModelLoaded) return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+    try {
+      const img = await createImageElement(imageDataUrl);
+      const detection = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+      if (!detection?.descriptor) return null;
+
+      const matcher = buildMatcher();
+      const bestMatch = matcher.findBestMatch(detection.descriptor);
+      if (bestMatch.label === 'unknown') return null;
+      return students.find(s => s.id === bestMatch.label) ?? null;
+    } catch (error) {
+      console.error('Recognition error:', error);
+      return null;
+    }
+  };
 
   // Initialize Firebase automatically with fallback credentials
-  useEffect(() => {
+  const loadFirebaseData = async () => {
     const config = getStoredConfig();
-    if (config) {
-      initFirebase(config);
+    if (!config) return;
+
+    const initialized = initFirebase(config);
+    if (!initialized) {
+      showToast('error', 'Firebase initialization failed. Please check your config.');
+      return;
     }
+
+    const [fbStudents, fbAttendance] = await Promise.all([
+      fetchStudentsFromFirebase(),
+      fetchAttendanceFromFirebase(),
+    ]);
+
+    if (fbStudents.length > 0) {
+      setStudents(fbStudents as Student[]);
+    }
+    if (fbAttendance.length > 0) {
+      setRecords(fbAttendance as AttendanceRecord[]);
+    }
+  };
+
+  useEffect(() => {
+    loadFirebaseData();
   }, []);
 
   // Auto-update scan mode every minute
@@ -1357,6 +1491,7 @@ export default function App() {
   useEffect(() => {
     if (screen === 'faceScan' && !cameraActive) {
       startCamera();
+      loadFaceModels();
     }
     return () => {
       if (screen !== 'faceScan') stopCam();
@@ -1402,59 +1537,72 @@ export default function App() {
           if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
           setScanning(false);
 
-          const rand = Math.random();
-          if (students.length === 0 || rand < 0.12) {
-            setScanResult({ type: 'notfound' });
-          } else {
-            const student = students[Math.floor(Math.random() * students.length)];
-            const existingRec = records.find(r => r.studentId === student.id && r.date === today);
+          (async () => {
+            const student = await recognizeCurrentFace();
+            if (!student) {
+              setScanResult({ type: 'notfound' });
+              return;
+            }
 
+            const existingRec = records.find(r => r.studentId === student.id && r.date === today);
             if (scanMode === 'signin') {
               if (existingRec && existingRec.signInTime !== '-') {
                 setScanResult({ type: 'duplicate', student });
-              } else {
-                const timeNow = format(new Date(), 'HH:mm');
-                const newRec: AttendanceRecord = {
-                  id: `${student.id}-${today}`,
-                  studentId: student.id,
-                  studentName: student.name,
-                  rollNumber: student.rollNumber,
-                  date: today,
-                  signInTime: timeNow,
-                  signOutTime: '-',
-                  status: 'Present',
-                  confidence: 88 + Math.random() * 12,
-                  totalHours: '-',
-                };
-                setRecords(prev => {
-                  const filtered = prev.filter(r => !(r.studentId === student.id && r.date === today));
-                  return [...filtered, newRec];
-                });
-                setScanResult({ type: 'recognized', student });
+                return;
               }
-            } else {
-              // Sign out
-              if (existingRec && existingRec.signOutTime !== '-') {
-                setScanResult({ type: 'duplicate', student });
-              } else if (!existingRec || existingRec.signInTime === '-') {
-                // Never signed in
-                setScanResult({ type: 'notfound' });
-              } else {
-                const timeNow = format(new Date(), 'HH:mm');
-                const [inH, inM] = existingRec.signInTime.split(':').map(Number);
-                const [outH, outM] = timeNow.split(':').map(Number);
-                const totalMins = (outH * 60 + outM) - (inH * 60 + inM);
-                const hrs = Math.floor(totalMins / 60);
-                const mins = totalMins % 60;
-                setRecords(prev => prev.map(r =>
-                  r.studentId === student.id && r.date === today
-                    ? { ...r, signOutTime: timeNow, totalHours: `${hrs}h ${mins}m` }
-                    : r
-                ));
-                setScanResult({ type: 'recognized', student });
+              const timeNow = format(new Date(), 'HH:mm');
+              const newRec: AttendanceRecord = {
+                id: `${student.id}-${today}`,
+                studentId: student.id,
+                studentName: student.name,
+                rollNumber: student.rollNumber,
+                date: today,
+                signInTime: timeNow,
+                signOutTime: '-',
+                status: 'Present',
+                confidence: 88 + Math.random() * 12,
+                totalHours: '-',
+              };
+              setRecords(prev => {
+                const filtered = prev.filter(r => !(r.studentId === student.id && r.date === today));
+                return [...filtered, newRec];
+              });
+              if (isFirebaseConfigured()) {
+                syncAttendanceToFirebase(newRec);
               }
+              setScanResult({ type: 'recognized', student });
+              return;
             }
-          }
+
+            if (existingRec && existingRec.signOutTime !== '-') {
+              setScanResult({ type: 'duplicate', student });
+              return;
+            }
+            if (!existingRec || existingRec.signInTime === '-') {
+              setScanResult({ type: 'notfound' });
+              return;
+            }
+            const timeNow = format(new Date(), 'HH:mm');
+            const [inH, inM] = existingRec.signInTime.split(':').map(Number);
+            const [outH, outM] = timeNow.split(':').map(Number);
+            const totalMins = (outH * 60 + outM) - (inH * 60 + inM);
+            const hrs = Math.floor(totalMins / 60);
+            const mins = totalMins % 60;
+            const updatedRecord: AttendanceRecord = {
+              ...existingRec,
+              signOutTime: timeNow,
+              totalHours: `${hrs}h ${mins}m`,
+            };
+            setRecords(prev => prev.map(r =>
+              r.studentId === student.id && r.date === today
+                ? updatedRecord
+                : r
+            ));
+            if (isFirebaseConfigured()) {
+              syncAttendanceToFirebase(updatedRecord);
+            }
+            setScanResult({ type: 'recognized', student });
+          })();
           return 100;
         }
         return prev + 1.5;

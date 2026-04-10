@@ -31,6 +31,19 @@ const DEFAULT_CONFIG: FirebaseConfig = {
 
 // Get stored config from localStorage, or use default provided credentials
 export const getStoredConfig = (): FirebaseConfig | null => {
+  const envConfig: Partial<FirebaseConfig> = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  };
+
+  if (envConfig.apiKey && envConfig.projectId && envConfig.appId) {
+    return envConfig as FirebaseConfig;
+  }
+
   const stored = localStorage.getItem('firebase_config');
   if (!stored) {
     return DEFAULT_CONFIG;
